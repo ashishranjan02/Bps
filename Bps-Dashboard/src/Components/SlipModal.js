@@ -1,197 +1,177 @@
 import React, { useRef } from 'react';
 import {
   Modal, Box, Typography, Divider, Button, Table, TableHead,
-  TableBody, TableRow, TableCell, TableContainer, Paper, Grid,
-  Stack
+  TableBody, TableRow, TableCell, Paper, Grid
 } from '@mui/material';
 import ReceiptIcon from '@mui/icons-material/Receipt';
-
-const style = {
-  position: 'absolute',
-  top: '50%',
-  left: '50%',
-  transform: 'translate(-50%, -50%)',
-  width: '210mm', // A4 width
-  maxHeight: '90vh',
-  bgcolor: '#fff',
-  boxShadow: 10,
-  borderRadius: 2,
-  p: 1.5,
-  overflowY: 'auto',
-  border: '1px solid black',
-  fontFamily: "'Roboto', sans-serif",
-};
-
-const formatCurrency = (amount) => `₹${Number(amount || 0).toFixed(2)}`;
-const formatDate = (dateStr) => dateStr ? new Date(dateStr).toLocaleDateString() : 'N/A';
 
 const SlipModal = ({ open, handleClose, bookingData }) => {
   const printRef = useRef();
 
   if (!bookingData) return null;
 
-  const addresses = [
-    { city: "H.O. DELHI", 
-      address: "332, Kucha Ghasi Ram, Chandni Chowk, Fatehpuri, Delhi -110006,", 
-      phone: "011-45138699, 7779993453" 
-    },
+  // --- helper functions ---
+  const formatCurrency = (amount) => `₹${Number(amount || 0).toFixed(2)}`;
+  const formatDate = (dateStr) => dateStr ? new Date(dateStr).toLocaleDateString() : 'N/A';
 
-    { city: "MUMBAI", 
-      address: "1, Malharrao Wadi, Gr. Flr., R. No. 4, D.A Lane Kalabadevi Rd., Mumbai-400002,", 
-      phone: "022-49711975, 7779993454" 
-    },
+  // --- local addresses ---
+  const addresses = [
+    { city: "H.O. DELHI", address: "332, Kucha Ghasi Ram, Chandni Chowk, Fatehpuri, Delhi -110006", phone: "011-45138699, 7779993453" },
+    { city: "MUMBAI", address: "1, Malharrao Wadi, Gr. Flr., R. No. 4, D.A Lane Kalbadevi Rd., Mumbai-400002", phone: "022-49711975, 7779993454" }
   ];
 
-  const Invoice = () => (
-    <Paper elevation={0} sx={{m: 1, border: '1.5px solid black'}}>
-      {/* Header */}
-      <Grid container justifyContent={'space-between'} p={1}>
-        <Grid alignItems={'center'}></Grid>
-            <Box  textAlign={'center'} color={'black'}>
-                <Typography variant="h5" borderBottom="2px solid #949090ff">
-                    BHARAT PARCEL SERVICES PVT.LTD.
-                </Typography>
+  // --- tax calculations (fallback if not provided from API) ---
+  const cgstRate = bookingData?.cgst || 9;
+  const sgstRate = bookingData?.sgst || 9;
+  const igstRate = bookingData?.igst || 0;
 
-                <Typography display="inline-block" borderBottom="2px solid #949090ff">
-                    SUBJECT TO DELHI JURISDICTION
-                </Typography>
-            </Box> 
-    
-        <Box textAlign={'end'}>
-            <Typography variant="subtitle2" fontWeight="bold">
-                GSTIN : 07AAECB6506F1ZY
-            </Typography>
-            <Typography variant="subtitle2" fontWeight="bold">
-                PAN : AAECB6506F
-            </Typography>
+  const cgstAmount = (bookingData?.grandTotal * cgstRate) / 100;
+  const sgstAmount = (bookingData?.grandTotal * sgstRate) / 100;
+  const igstAmount = (bookingData?.grandTotal * igstRate) / 100;
+  const totalWithTax = bookingData?.grandTotal + cgstAmount + sgstAmount + igstAmount;
+
+  // --- invoice layout ---
+  const Invoice = () => (
+    <Paper elevation={0} sx={{ m: 1, border: '1.5px solid black' }}>
+      {/* Header */}
+      <Grid container justifyContent="space-between" p={1}>
+        <Box textAlign="center" color="black">
+          <Typography variant="h5" borderBottom="2px solid #949090ff">
+            BHARAT PARCEL SERVICES PVT.LTD.
+          </Typography>
+          <Typography display="inline-block" borderBottom="2px solid #949090ff">
+            SUBJECT TO {bookingData?.startStation?.stationName} JURISDICTION
+          </Typography>
+        </Box>
+
+        <Box textAlign="end">
+          <Typography variant="subtitle2" fontWeight="bold">GSTIN : {bookingData?.startStation?.gst}</Typography>
+          <Typography variant="subtitle2" fontWeight="bold">PAN : AAECB6506F</Typography>
         </Box>
       </Grid>
-                        
+
       {/* Address Section */}
-      <Box sx={{ mt:8, p:1,}}>
+      <Box sx={{ mt: 2, p: 1 }}>
         {addresses.map((addr) => (
-          <Grid key={addr.city} 
-                container spacing={1}
-                alignItems='flex-start'
-          >
-    
-            <Typography variant="subtitle2">{addr.city} </Typography>
-            <Typography variant='subtitle3' >:</Typography>
-            <Typography variant="caption" display='block' fontWeight={'bold'}>{addr.address}</Typography>
-            <Typography variant="caption" display='block' fontWeight={'bold'}> {addr.phone}</Typography>
+          <Grid key={addr.city} container alignItems="flex-start" spacing={0.5}>
+            <Typography variant="subtitle2">{addr.city}</Typography>
+            <Typography variant="subtitle2" mx={0.5}>:</Typography>
+            <Typography variant="caption" fontWeight="bold">{addr.address}</Typography>
+            <Typography variant="caption" display="block" fontWeight="bold">{addr.phone}</Typography>
           </Grid>
         ))}
       </Box>
 
-      
-      {/* Ref and Date */}
-      <Grid container justifyContent={'space-between'} mt={1} borderBottom="1px solid black" p={1} >
-        <Typography>Ref. No.: <strong>{bookingData?.items?.[0]?.refNo || '35723'}</strong></Typography>
-        <Typography>Date: <strong>{formatDate(bookingData?.bookingDate) || '2-Jun-2025'}</strong></Typography>
+      {/* Ref & Dates */}
+      <Grid container justifyContent="space-between" borderTop="1px solid black" borderBottom="1px solid black" p={1}>
+        <Typography>Ref. No.: <strong>{bookingData?.items?.[0]?.refNo}</strong></Typography>
+        <Typography>Date: <strong>{formatDate(bookingData?.bookingDate)}</strong></Typography>
       </Grid>
 
       {/* From & To */}
-      <Grid container justifyContent={'space-between'} borderBottom="1px solid black" >
-        <Typography>From (City): <strong>{bookingData?.fromCity || 'DELHI'}</strong></Typography>
-        <Typography>To (City): <strong>{bookingData?.toCity || 'MUMBAI'}</strong></Typography>
+      <Grid container justifyContent="space-between" borderBottom="1px solid black" p={1}>
+        <Typography>From (City): <strong>{bookingData?.fromCity}</strong></Typography>
+        <Typography>To (City): <strong>{bookingData?.toCity}</strong></Typography>
       </Grid>
 
-      <Grid container justifyContent={'space-between'} borderBottom="1px solid black" >
-        <Typography>From: <strong>{bookingData?.senderName || 'MITTAL AND SONS'}</strong></Typography>
-        <Typography>GSTIN: <strong>{bookingData?.senderGgt || '07AAAFM9652J1ZM'}</strong></Typography>
+      <Grid container justifyContent="space-between" borderBottom="1px solid black" p={1}>
+        <Typography>From: <strong>{bookingData?.senderName}</strong></Typography>
+        <Typography>GSTIN: <strong>{bookingData?.senderGgt}</strong></Typography>
       </Grid>
-          
-      <Grid container justifyContent={'space-between'} >
-        <Typography>To: <strong>{bookingData?.receiverName || 'JAINEE FAB'}</strong></Typography>
-        <Typography>GSTIN: <strong>{bookingData?.receiverGgt || '27AAAPL1508N1ZQ'}</strong></Typography>
-      </Grid>
-      
 
-      <Table size="small" sx={{ border: '1px solid black' }}>
-        <TableHead sx={{ bgcolor: "#f5f5f5" }}>
-            <TableRow>
-                {["No. of.", "Insurance", "VPP Amount", "To Pay/Paid", "Weight (Kgs)", "Amount"].map((head, idx) => (
-                    <TableCell key={idx} align="center" sx={{ border: '1px solid black', fontWeight: 'bold' }}>{head}</TableCell>
-                ))}
-            </TableRow>
+      <Grid container justifyContent="space-between" borderBottom="1px solid black" p={1}>
+        <Typography>To: <strong>{bookingData?.receiverName}</strong></Typography>
+        <Typography>GSTIN: <strong>{bookingData?.receiverGgt}</strong></Typography>
+      </Grid>
+
+      {/* Items Table */}
+      <Table size="small" sx={{ border: '1px solid black', mt: 1 }}>
+        <TableHead>
+          <TableRow>
+            {["No. of", "Insurance", "VPP Amount", "To Pay/Paid", "Weight (Kgs)", "Amount"].map((h, i) => (
+              <TableCell key={i} align="center" sx={{ border: "1px solid black", fontWeight: "bold" }}>{h}</TableCell>
+            ))}
+          </TableRow>
         </TableHead>
         <TableBody>
-            {bookingData.items.map((item, idx) => (
-                <TableRow key={item._id} sx={{ bgcolor: idx % 2 === 0 ? "#fff" : "#f9f9f9" }}>
-                    <TableCell sx={{ border: "1px solid black", align:"center" }}>{idx + 1}</TableCell>
-                    <TableCell sx={{ border: "1px solid black", align:"center" }}>{formatCurrency(item.insurance)}</TableCell>
-                    <TableCell sx={{ border: "1px solid black", align:"center" }}>{formatCurrency(item.vppAmount)}</TableCell>
-                    <TableCell sx={{ border: "1px solid black", align:"center" }}>{item.toPay || "To Pay"}</TableCell>
-                    <TableCell sx={{ border: "1px solid black", align:"center" }}>{item.weight}</TableCell>
-
-                    <TableCell sx={{ border: "1px solid black", p: 0 }}>
-                        <TableRow>
-                    <TableCell sx={{ border: "1px solid black", width: "70%" }}>FREIGHT</TableCell>
-                    <TableCell sx={{ border: "1px solid black" }} align="right">405.00</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell sx={{ border: "1px solid black" }}>INS/VPP</TableCell>
-                    <TableCell sx={{ border: "1px solid black" }} align="right"></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell sx={{ border: "1px solid black" }}>CGST @ %</TableCell>
-                    <TableCell sx={{ border: "1px solid black" }} align="right"></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell sx={{ border: "1px solid black" }}>SGST @ %</TableCell>
-                    <TableCell sx={{ border: "1px solid black" }} align="right"></TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell sx={{ border: "1px solid black" }}>IGST @ 18%</TableCell>
-                    <TableCell sx={{ border: "1px solid black" }} align="right">72.90</TableCell>
-                  </TableRow>
-                    </TableCell>
-                    {/* <TableCell sx={{ border: "1px solid black", align:"center", width:"30%" }}>{formatCurrency(item.amount)}</TableCell> */}
-                </TableRow>
-            ))}
-
-            
-            <TableRow>
-                <TableCell colSpan={5} align="right" sx={{ fontWeight: 'bold', border: '1px solid black' }}>TOTAL</TableCell>
-                <TableCell sx={{ border: '1px solid solid', fontWeight: 'bold' }}>{formatCurrency(bookingData?.grandTotal)}</TableCell>
+          {bookingData.items.map((item, idx) => (
+            <TableRow key={item._id || idx}>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{idx + 1}</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(item.insurance)}</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(item.vppAmount)}</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{item.toPay}</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{item.weight}</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(item.amount)}</TableCell>
             </TableRow>
+          ))}
+
+          {/* Totals */}
+          <TableRow>
+            <TableCell colSpan={5} align="right" sx={{ fontWeight: "bold", border: "1px solid black" }}>Sub Total</TableCell>
+            <TableCell align="center" sx={{ fontWeight: "bold", border: "1px solid black" }}>
+              {formatCurrency(bookingData?.grandTotal)}
+            </TableCell>
+          </TableRow>
+
+          {/* Tax rows */}
+          {cgstRate > 0 && (
+            <TableRow>
+              <TableCell colSpan={5} align="right" sx={{ border: "1px solid black" }}>CGST ({cgstRate}%)</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(cgstAmount)}</TableCell>
+            </TableRow>
+          )}
+          {sgstRate > 0 && (
+            <TableRow>
+              <TableCell colSpan={5} align="right" sx={{ border: "1px solid black" }}>SGST ({sgstRate}%)</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(sgstAmount)}</TableCell>
+            </TableRow>
+          )}
+          {igstRate > 0 && (
+            <TableRow>
+              <TableCell colSpan={5} align="right" sx={{ border: "1px solid black" }}>IGST ({igstRate}%)</TableCell>
+              <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(igstAmount)}</TableCell>
+            </TableRow>
+          )}
+
+          {/* Total after tax */}
+          <TableRow>
+            <TableCell colSpan={5} align="right" sx={{ fontWeight: "bold", border: "1px solid black" }}>Total (Incl. Tax)</TableCell>
+            <TableCell align="center" sx={{ fontWeight: "bold", border: "1px solid black" }}>
+              {formatCurrency(totalWithTax)}
+            </TableCell>
+          </TableRow>
         </TableBody>
       </Table>
-
     </Paper>
   );
 
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank', 'width=1000,height=800');
-    printWindow.document.write('<html><head><title>Print Invoice</title>');
-    printWindow.document.write('<style>@media print { body { margin: 0; } }</style>');
-    printWindow.document.write('</head><body>');
-    printWindow.document.write(printRef.current.innerHTML);
-    printWindow.document.write('</body></html>');
-    printWindow.document.close();
-    printWindow.print();
+    const w = window.open('', '_blank');
+    w.document.write(`<html><head><title>Invoice</title></head><body>${printRef.current.innerHTML}</body></html>`);
+    w.document.close();
+    w.print();
   };
 
   return (
     <Modal open={open} onClose={handleClose}>
-      <Box sx={style}>
+      <Box sx={{
+        position: 'absolute', top: '50%', left: '50%',
+        transform: 'translate(-50%, -50%)', bgcolor: '#fff', width: '210mm',
+        border: '1px solid black', p: 2, maxHeight: '90vh', overflowY: 'auto'
+      }}>
         <Box ref={printRef}>
-          {/* Invoice copy 1 */}
           <Invoice />
-          {/* Divider Line */}
           <Divider sx={{ borderColor: 'black', borderStyle: 'dashed', my: 1 }} />
-          {/* Invoice copy 2 */}
           <Invoice />
         </Box>
-
-        <Box display="flex" justifyContent="center" mt={2}>
+        <Box textAlign="center" mt={2}>
           <Button
             variant="contained"
             startIcon={<ReceiptIcon />}
             sx={{ borderRadius: 2, px: 4, textTransform: 'none' }}
             onClick={handlePrint}
           >
-            Print Invoice
+            Print Slip
           </Button>
         </Box>
       </Box>
@@ -200,5 +180,3 @@ const SlipModal = ({ open, handleClose, bookingData }) => {
 };
 
 export default SlipModal;
-
-

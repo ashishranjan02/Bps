@@ -21,6 +21,9 @@ import { useNavigate } from "react-router-dom";
 import CustomerSearch from "../../../../Components/CustomerSearch";
 import { ArrowBack } from '@mui/icons-material';
 import CheckCircle from '@mui/icons-material/CheckCircle';
+import Snackbar from "@mui/material/Snackbar";
+import MuiAlert from "@mui/material/Alert";
+import Swal from 'sweetalert2';
 
 const toPay = ['toPay', 'paid', 'none'];
 
@@ -43,7 +46,7 @@ const dummySetter = () => { };
 
 const generateInitialValues = () => {
   const receiptNo = generateUniqueId("RCPT-", dummySet, dummySetter);
-  const refNo = generateUniqueId("REF-", dummySet, dummySetter);
+  //const refNo = generateUniqueId("REF-", dummySet, dummySetter);
 
   return {
     startStation: "",
@@ -71,7 +74,7 @@ const generateInitialValues = () => {
     items: [
       {
         receiptNo: receiptNo,
-        refNo: refNo,
+        refNo: "",
         insurance: "",
         vppAmount: "",
         toPay: "",
@@ -82,6 +85,7 @@ const generateInitialValues = () => {
     ],
     addComment: "",
     freight: "",
+    billty: "20",
     ins_vpp: "",
     billTotal: "",
     cgst: "",
@@ -91,29 +95,30 @@ const generateInitialValues = () => {
   };
 };
 const totalFields = [
-  { name: "freight", label: "FREIGHT", readOnly: false },
+  { name: "freight", label: "FREIGHT", readOnly: true },
   { name: "ins_vpp", label: "INS/VPP", readOnly: false },
   { name: "billTotal", label: "Bill Total", readOnly: true },
   { name: "cgst", label: "CGST%", readOnly: false },
   { name: "sgst", label: "SGST%", readOnly: false },
   { name: "igst", label: "IGST%", readOnly: false },
+  { name: "billty", label: "Billty", readOnly: true },
   { name: "grandTotal", label: "Grand Total", readOnly: true },
   { name: "roundOff", label: "Round Off", readOnly: true },
 ];
 const calculateTotals = (values) => {
   const items = values.items || [];
 
-  const itemTotal = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const freight = Number(values.freight || 0);
+  const freight = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const ins_vpp = Number(values.ins_vpp || 0);
 
-  const billTotal = itemTotal + freight + ins_vpp;
+  const billTotal = freight + ins_vpp;
 
   const cgst = (Number(values.cgst || 0) / 100) * billTotal;
   const sgst = (Number(values.sgst || 0) / 100) * billTotal;
   const igst = (Number(values.igst || 0) / 100) * billTotal;
+  const billty = (Number(values.billty || 0))
 
-  let grandTotal = billTotal + cgst + sgst + igst;
+  let grandTotal = billTotal + cgst + sgst + igst + billty;
 
   // --- Round Off Calculation ---
   const roundedGrandTotal = Math.round(grandTotal); // round to nearest whole number
@@ -122,6 +127,7 @@ const calculateTotals = (values) => {
   grandTotal = roundedGrandTotal; // update grand total to rounded value
 
   return {
+    freight: freight.toFixed(2),
     billTotal: billTotal.toFixed(2),
     grandTotal: grandTotal.toFixed(2),
     computedTotalRevenue: grandTotal.toFixed(2),
@@ -132,45 +138,77 @@ const calculateTotals = (values) => {
   };
 };
 
-
-
 const BookingForm = () => {
   const [senderCities, setSenderCities] = React.useState([]);
   const [receiverCities, setReceiverCities] = React.useState([]);
   const [generatedReceiptNos, setGeneratedReceiptNos] = React.useState(new Set());
   const [generatedRefNos, setGeneratedRefNos] = React.useState(new Set());
 
-
-
   const dispatch = useDispatch();
   const { states, cities } = useSelector((state) => state.location);
   const { list: stations } = useSelector((state) => state.stations);
   const navigate = useNavigate();
 
+  const [snackbar, setSnackbar] = React.useState({
+    open: false,
+    message: "",
+    severity: "success",
+  });
 
   useEffect(() => {
     dispatch(fetchStates());
     dispatch(fetchStations());
   }, [dispatch]);
 
+  const showSuccessAlert = (bookingData) => {
+    Swal.fire({
+      title: 'Success!',
+      text: 'Booking created successfully!',
+      icon: 'success',
+      confirmButtonText: 'OK',
+      confirmButtonColor: '#3085d6',
+      timer: 3000,
+      timerProgressBar: true,
+      didClose: () => {
+        navigate("/booking");
+      }
+    });
+  };
+
+  const showErrorAlert = (errorMessage) => {
+    Swal.fire({
+      title: 'Error!',
+      text: errorMessage || 'Failed to create booking. Please try again.',
+      icon: 'error',
+      confirmButtonText: 'OK',
+      confirmButtonColor: '#d33',
+    });
+  };
 
   return (
     <LocalizationProvider dateAdapter={AdapterDateFns}>
       <Formik
         initialValues={generateInitialValues()}
         onSubmit={async (values, { resetForm, setSubmitting }) => {
+          setSubmitting(true);
           try {
-            setSubmitting(true);
-            await dispatch(createBooking(values)).unwrap();
+            const response = await dispatch(createBooking(values)).unwrap();
+            console.log("Booking response:", response);
+
+            // ✅ Success SweetAlert
+            showSuccessAlert(response);
+
             resetForm();
-            navigate('/booking')
+            // Navigation will happen after SweetAlert is closed
           } catch (error) {
-            console.log("Error while adding booking", error);
+            console.error("Booking failed:", error);
+
+            // ❌ Error SweetAlert
+            showErrorAlert(error?.message || "Failed to create booking. Please try again.");
           } finally {
             setSubmitting(false);
           }
-        }
-        }
+        }}
       >
         {({ values, handleChange, setFieldValue, isSubmitting }) => (
           <Form>
@@ -730,6 +768,22 @@ const BookingForm = () => {
           </Form>
         )}
       </Formik>
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: "top", horizontal: "center" }}
+      >
+        <MuiAlert
+          onClose={() => setSnackbar({ ...snackbar, open: false })}
+          severity={snackbar.severity}
+          sx={{ width: "100%" }}
+          elevation={6}
+          variant="filled"
+        >
+          {snackbar.message}
+        </MuiAlert>
+      </Snackbar>
     </LocalizationProvider>
   );
 };
@@ -759,15 +813,16 @@ const EffectSyncCities = ({ values, dispatch, setSenderCities, setReceiverCities
 
   return null;
 };
+
 const EffectSyncTotals = ({ values, setFieldValue }) => {
   useEffect(() => {
     const totals = calculateTotals(values);
+    setFieldValue("freight", totals.freight);
     setFieldValue("billTotal", totals.billTotal);
     setFieldValue("grandTotal", totals.grandTotal);
     setFieldValue("roundOff", totals.roundOff);
   }, [
     values.items,
-    values.freight,
     values.ins_vpp,
     values.cgst,
     values.sgst,
@@ -775,10 +830,7 @@ const EffectSyncTotals = ({ values, setFieldValue }) => {
     setFieldValue
   ]);
 
-
   return null;
 };
-
-
 
 export default BookingForm;
