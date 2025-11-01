@@ -953,18 +953,53 @@ export const getBookingSummaryByDate = async (req, res) => {
     if (user.role === "supervisor") {
       query.createdByUser = user._id;
     }
+    
     const bookings = await Booking.find(query).sort({ bookingDate: -1 });
 
     const transformedBookings = bookings.map((booking) => {
       const grandTotal = booking.grandTotal || 0;
-
-      const paidAmount =
-        booking.paidAmount ||
-        booking.paidAmount ||
-        (booking.payments?.reduce((sum, p) => sum + (p.amount || 0), 0)) ||
-        0;
+      
+      // Calculate payment based on items' toPay status
+      let paidAmount = 0;
+      let totalPayableAmount = 0;
+      let paidItemsAmount = 0;
+      
+      if (booking.items && Array.isArray(booking.items)) {
+        booking.items.forEach(item => {
+          const itemAmount = Number(item.amount) || 0;
+          totalPayableAmount += itemAmount;
+          
+          if (item.toPay === "paid") {
+            paidItemsAmount += itemAmount;
+          }
+        });
+      }
+      
+      // Calculate paid amount based on items payment status
+      if (paidItemsAmount > 0) {
+        if (paidItemsAmount >= totalPayableAmount) {
+          // All items are fully paid
+          paidAmount = grandTotal;
+        } else {
+          // Some items are paid - calculate proportional amount
+          // This includes the base item amount plus proportional freight, taxes, etc.
+          const paidRatio = totalPayableAmount > 0 ? paidItemsAmount / totalPayableAmount : 0;
+          paidAmount = Math.round(grandTotal * paidRatio);
+        }
+      } else {
+        // No items are marked as paid, use booking-level paidAmount
+        paidAmount = booking.paidAmount || 0;
+      }
 
       const toPayAmount = Math.max(grandTotal - paidAmount, 0);
+
+      // Determine payment status
+      let paymentStatus = "Unpaid";
+      if (paidAmount >= grandTotal && grandTotal > 0) {
+        paymentStatus = "Paid";
+      } else if (paidAmount > 0 && paidAmount < grandTotal) {
+        paymentStatus = "Partial";
+      }
 
       return {
         ...booking.toObject(),
@@ -972,32 +1007,35 @@ export const getBookingSummaryByDate = async (req, res) => {
         paid: paidAmount,
         toPay: toPayAmount,
         itemsCount: booking.items?.length || 0,
-        paymentStatus:
-          paidAmount >= grandTotal ? "Paid" :
-            paidAmount > 0 ? "Partial" :
-              "Unpaid"
+        paymentStatus: paymentStatus
       };
     });
-    // Calculate totals
+
+    // Calculate summary totals
+    const totalPaid = transformedBookings.reduce((sum, b) => sum + b.paid, 0);
+    const totalToPay = transformedBookings.reduce((sum, b) => sum + b.toPay, 0);
+    const paidBookings = transformedBookings.filter(b => b.paymentStatus === "Paid").length;
+    const unpaidBookings = transformedBookings.filter(b => b.paymentStatus === "Unpaid").length;
+    const partialBookings = transformedBookings.filter(b => b.paymentStatus === "Partial").length;
+
     const summary = {
-      totalPaid: transformedBookings.reduce((sum, b) => sum + b.paid, 0),
-      totalToPay: transformedBookings.reduce((sum, b) => sum + b.toPay, 0),
+      totalPaid,
+      totalToPay,
       totalBookings: transformedBookings.length,
-      paidBookings: transformedBookings.filter(b => b.paid >= b.grandTotal).length,
-      unpaidBookings: transformedBookings.filter(b => b.paid === 0).length,
-      partialBookings: transformedBookings.filter(b => b.paid > 0 && b.paid < b.grandTotal).length
+      paidBookings,
+      unpaidBookings,
+      partialBookings,
+      grandTotal: totalPaid + totalToPay,
+      paymentBreakdown: {
+        fullyPaid: paidBookings,
+        partiallyPaid: partialBookings,
+        unpaid: unpaidBookings
+      }
     };
+
     res.status(200).json({
       message: `Bookings from ${fromDate} to ${toDate}`,
-      summary: {
-        ...summary,
-        grandTotal: summary.totalPaid + summary.totalToPay,
-        paymentBreakdown: {
-          fullyPaid: summary.paidBookings,
-          partiallyPaid: summary.partialBookings,
-          unpaid: summary.unpaidBookings
-        }
-      },
+      summary,
       bookings: transformedBookings
     });
   } catch (error) {
