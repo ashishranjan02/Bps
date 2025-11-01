@@ -1101,6 +1101,7 @@ export const getCADetailsSummary = async (req, res) => {
     }
 
     const baseQuery = { isDelivered: true };
+    
     // Resolve pickup (startStation)
     if (pickup) {
       const startStationDoc = await Station.findOne({
@@ -1111,6 +1112,7 @@ export const getCADetailsSummary = async (req, res) => {
       }
       baseQuery.startStation = startStationDoc._id;
     }
+    
     // Resolve drop (endStation)
     if (drop) {
       const endStationDoc = await Station.findOne({
@@ -1121,27 +1123,86 @@ export const getCADetailsSummary = async (req, res) => {
       }
       baseQuery.endStation = endStationDoc._id;
     }
-    // Date range
+    
+    // FIXED: Handle both "YYYY-MM-DD" and "DD-MM-YYYY" formats
     const dateFilter = {};
     if (fromDate) {
-      const from = new Date(fromDate);
-      from.setHours(0, 0, 0, 0);
+      let from;
+      
+      // Check if date is in "YYYY-MM-DD" format (like "2025-10-30")
+      if (fromDate.includes('-') && fromDate.split('-')[0].length === 4) {
+        // Parse as "YYYY-MM-DD"
+        const [year, month, day] = fromDate.split('-');
+        from = new Date(year, month - 1, day, 0, 0, 0, 0);
+      } else {
+        // Parse as "DD-MM-YYYY" 
+        const [day, month, year] = fromDate.split('-');
+        from = new Date(year, month - 1, day, 0, 0, 0, 0);
+      }
+      
+      if (isNaN(from.getTime())) {
+        return res.status(400).json({ 
+          message: `Invalid fromDate format: ${fromDate}. Use YYYY-MM-DD or DD-MM-YYYY format.`,
+          receivedFormat: fromDate
+        });
+      }
       dateFilter.$gte = from;
+      console.log(`📅 From Date: ${fromDate} -> ${from} (UTC: ${from.toISOString()})`);
     }
+    
     if (toDate) {
-      const toD = new Date(toDate);
-      toD.setHours(23, 59, 59, 999);
+      let toD;
+      
+      // Check if date is in "YYYY-MM-DD" format (like "2025-11-01")
+      if (toDate.includes('-') && toDate.split('-')[0].length === 4) {
+        // Parse as "YYYY-MM-DD"
+        const [year, month, day] = toDate.split('-');
+        toD = new Date(year, month - 1, day, 23, 59, 59, 999);
+      } else {
+        // Parse as "DD-MM-YYYY"
+        const [day, month, year] = toDate.split('-');
+        toD = new Date(year, month - 1, day, 23, 59, 59, 999);
+      }
+      
+      if (isNaN(toD.getTime())) {
+        return res.status(400).json({ 
+          message: `Invalid toDate format: ${toDate}. Use YYYY-MM-DD or DD-MM-YYYY format.`,
+          receivedFormat: toDate
+        });
+      }
       dateFilter.$lte = toD;
+      console.log(`📅 To Date: ${toDate} -> ${toD} (UTC: ${toD.toISOString()})`);
     }
+    
     if (Object.keys(dateFilter).length > 0) {
       baseQuery.bookingDate = dateFilter;
     }
 
     console.log("👉 Final baseQuery:", JSON.stringify(baseQuery, null, 2));
 
+    // Debug: Check what dates exist in database for the search range
+    const dateDebug = await Booking.find({
+      isDelivered: true,
+      bookingDate: dateFilter
+    }).limit(5).select('bookingDate bookingId startStation endStation').lean();
+    
+    console.log("🔍 Deliveries in search range:", dateDebug.map(b => ({
+      bookingId: b.bookingId,
+      bookingDate: b.bookingDate,
+      iso: b.bookingDate?.toISOString(),
+      startStation: b.startStation,
+      endStation: b.endStation
+    })));
+
     // First check if any matching delivered bookings exist
     const anyDeliveries = await Booking.find(baseQuery).limit(1);
     if (anyDeliveries.length === 0) {
+      // Check if there are any deliveries in the date range (ignoring station filters)
+      const deliveriesInDateRange = await Booking.find({
+        isDelivered: true,
+        bookingDate: dateFilter
+      }).limit(5).select('bookingId startStation endStation').populate('startStation endStation');
+      
       return res.status(200).json(
         new ApiResponse(200, {
           summary: [],
@@ -1149,10 +1210,17 @@ export const getCADetailsSummary = async (req, res) => {
           filters: { pickup, drop, fromDate, toDate },
           diagnostics: {
             message: "No delivered bookings found matching pickup/drop/date criteria",
+            queryUsed: baseQuery,
+            dateRange: dateFilter,
+            deliveriesInDateRange: deliveriesInDateRange.map(d => ({
+              bookingId: d.bookingId,
+              startStation: d.startStation?.stationName || d.startStation,
+              endStation: d.endStation?.stationName || d.endStation
+            })),
             potentialIssues: [
-              "Bookings may not be marked as delivered",
               "Station names may not match exactly",
-              "No bookings exist for the date range"
+              "Bookings may not be marked as delivered",
+              "Date range might not include any delivered bookings"
             ]
           }
         }, "No matching deliveries found")
@@ -1178,15 +1246,38 @@ export const getCADetailsSummary = async (req, res) => {
           filters: { pickup, drop, fromDate, toDate },
           diagnostics: {
             message: "Deliveries found but no tax data present",
+            foundDeliveries: anyDeliveries.length,
             suggestion: "Check if CGST/SGST/IGST values are being recorded properly"
           }
         }, "No tax-eligible deliveries found")
       );
     }
 
-    // Aggregation placeholder (update as per your needs)
+    // Aggregation with proper station lookups
     const summary = await Booking.aggregate([
       { $match: taxQuery },
+      {
+        $lookup: {
+          from: "stations",
+          localField: "startStation",
+          foreignField: "_id",
+          as: "startStationInfo"
+        }
+      },
+      {
+        $lookup: {
+          from: "stations",
+          localField: "endStation",
+          foreignField: "_id",
+          as: "endStationInfo"
+        }
+      },
+      {
+        $addFields: {
+          startStationName: { $arrayElemAt: ["$startStationInfo.stationName", 0] },
+          endStationName: { $arrayElemAt: ["$endStationInfo.stationName", 0] }
+        }
+      },
       {
         $group: {
           _id: null,
@@ -1201,12 +1292,14 @@ export const getCADetailsSummary = async (req, res) => {
             $addToSet: {
               $concat: [
                 "$firstName",
-                { $cond: [{ $gt: [{ $strLenCP: "$middleName" }, 0] }, { $concat: [" ", "$middleName"] }, ""] },
+                { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ["$middleName", ""] } }, 0] }, { $concat: [" ", "$middleName"] }, ""] },
                 " ",
                 "$lastName"
               ]
             }
-          }
+          },
+          startStations: { $addToSet: "$startStationName" },
+          endStations: { $addToSet: "$endStationName" }
         }
       },
       {
@@ -1242,6 +1335,8 @@ export const getCADetailsSummary = async (req, res) => {
           senderNames: 1,
           senderGst: 1,
           customerNames: 1,
+          startStations: 1,
+          endStations: 1,
           particulars: { $literal: "Total" },
           gst: { $literal: "" },
           startStation: { $literal: pickup || "" },
@@ -1254,7 +1349,11 @@ export const getCADetailsSummary = async (req, res) => {
     const result = {
       summary,
       totals: summary[0] || getEmptyTotals(),
-      filters: { pickup, drop, fromDate, toDate }
+      filters: { pickup, drop, fromDate, toDate },
+      diagnostics: {
+        totalMatchingRecords: anyDeliveries.length,
+        dateRange: dateFilter
+      }
     };
 
     res.status(200).json(new ApiResponse(200, result, "CA Details summary fetched successfully"));
