@@ -937,24 +937,45 @@ export const getBookingSummaryByDate = async (req, res) => {
       return res.status(400).json({ message: "Both fromDate and toDate are required" });
     }
 
+    // Fixed date parsing with proper timezone handling
     const parseDateString = (str) => {
       const [day, month, year] = str.split("-");
-      return new Date(`${year}-${month}-${day}`);
+      // Create date in local timezone at start of day (00:00:00)
+      const date = new Date(year, month - 1, day);
+      return date;
     };
+
     const from = parseDateString(fromDate);
     const to = parseDateString(toDate);
+    
+    // Set to date to end of day (23:59:59.999)
     to.setHours(23, 59, 59, 999);
 
-    if (isNaN(from) || isNaN(to)) {
+    // Validate dates
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
       return res.status(400).json({ message: "Invalid date format" });
     }
 
-    const query = { bookingDate: { $gte: from, $lte: to } };
+    console.log('Searching bookings between:', from.toISOString(), 'and', to.toISOString());
+
+    const query = { 
+      bookingDate: { 
+        $gte: from, 
+        $lte: to 
+      } 
+    };
+    
     if (user.role === "supervisor") {
       query.createdByUser = user._id;
     }
     
     const bookings = await Booking.find(query).sort({ bookingDate: -1 });
+
+    // Debug: Check what dates we found
+    console.log(`Found ${bookings.length} bookings:`);
+    bookings.forEach(booking => {
+      console.log(`- ${booking.bookingId}: ${booking.bookingDate}`);
+    });
 
     const transformedBookings = bookings.map((booking) => {
       const grandTotal = booking.grandTotal || 0;
@@ -982,7 +1003,6 @@ export const getBookingSummaryByDate = async (req, res) => {
           paidAmount = grandTotal;
         } else {
           // Some items are paid - calculate proportional amount
-          // This includes the base item amount plus proportional freight, taxes, etc.
           const paidRatio = totalPayableAmount > 0 ? paidItemsAmount / totalPayableAmount : 0;
           paidAmount = Math.round(grandTotal * paidRatio);
         }
@@ -1033,8 +1053,14 @@ export const getBookingSummaryByDate = async (req, res) => {
       }
     };
 
+    // Format dates for response message
+    const formatDateForMessage = (dateStr) => {
+      const [day, month, year] = dateStr.split("-");
+      return `${day}-${month}-${year}`;
+    };
+
     res.status(200).json({
-      message: `Bookings from ${fromDate} to ${toDate}`,
+      message: `Bookings from ${formatDateForMessage(fromDate)} to ${formatDateForMessage(toDate)}`,
       summary,
       bookings: transformedBookings
     });
