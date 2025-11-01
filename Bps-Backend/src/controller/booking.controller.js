@@ -1216,17 +1216,17 @@ export const generateInvoiceByCustomer = async (req, res) => {
     const to = new Date(toDate);
     to.setHours(23, 59, 59, 999);
 
-    // ✅ Get all bookings for this customer name (either sender or receiver)
+    // ✅ Fetch all delivered bookings (either sender or receiver)
     const bookings = await Booking.find({
       $or: [
-        { receiverName: { $regex: customerName, $options: 'i' } },
-        { senderName: { $regex: customerName, $options: 'i' } }
+        { receiverName: { $regex: customerName, $options: "i" } },
+        { senderName: { $regex: customerName, $options: "i" } },
       ],
       bookingDate: { $gte: from, $lte: to },
       isDelivered: true,
     })
-      .populate('startStation')
-      .populate('customerId')
+      .populate("startStation")
+      .populate("customerId")
       .sort({ bookingDate: 1 });
 
     if (!bookings.length) {
@@ -1236,26 +1236,21 @@ export const generateInvoiceByCustomer = async (req, res) => {
       });
     }
 
-    // ✅ Determine billing info per booking
-    const filteredBookings = bookings.map(booking => {
-      const hasToPayItem = booking.items.some(i => i.toPay === 'toPay');
-      const hasPaidItem = booking.items.some(i => i.toPay === 'paid');
-      
+    // ✅ Step 1: Determine billing for each booking
+    const filteredBookings = bookings.map((booking) => {
+      const hasToPayItem = booking.items.some((i) => i.toPay === "toPay");
+      const hasPaidItem = booking.items.some((i) => i.toPay === "paid");
+
       let billingName = booking.receiverName;
       let billingGst = booking.receiverGgt;
       let billingAddress = booking.receiverLocality;
-      let billingType = 'receiver';
+      let billingType = "receiver (toPay)";
 
-      if (hasToPayItem) {
-        billingName = booking.receiverName;
-        billingGst = booking.receiverGgt;
-        billingAddress = booking.receiverLocality;
-        billingType = 'receiver (toPay)';
-      } else if (hasPaidItem && !hasToPayItem) {
+      if (hasPaidItem && !hasToPayItem) {
         billingName = booking.senderName;
         billingGst = booking.senderGgt;
         billingAddress = booking.senderLocality;
-        billingType = 'sender (paid)';
+        billingType = "sender (paid)";
       }
 
       return {
@@ -1267,9 +1262,22 @@ export const generateInvoiceByCustomer = async (req, res) => {
       };
     });
 
-    // ✅ Print to check
+    // ✅ Step 2: Filter to only include bookings where customer is the billing party
+    const customerBookings = filteredBookings.filter(
+      (b) => b.billingName.toLowerCase() === customerName.toLowerCase()
+    );
+
+    if (!customerBookings.length) {
+      return res.status(404).json({
+        message: "No bookings found where this party is the billing party",
+        searchedName: customerName,
+        availableBillingParties: [...new Set(filteredBookings.map(b => b.billingName))]
+      });
+    }
+
+    // ✅ Step 3: Debug log
     console.log("Final billing information for PDF:");
-    filteredBookings.forEach(b => {
+    customerBookings.forEach((b) => {
       console.log(`Booking ${b.bookingId}:`);
       console.log(`  - Billing Name: ${b.billingName}`);
       console.log(`  - Billing Type: ${b.billingType}`);
@@ -1277,42 +1285,58 @@ export const generateInvoiceByCustomer = async (req, res) => {
       console.log(`  - Receiver: ${b.receiverName}`);
     });
 
-    // ✅ Use the name that was requested — NOT first booking
-    const invoiceNo = await generateInvoiceNumber(filteredBookings[0]?.startStation?.stationName || 'DEL');
+    // ✅ Step 4: Pick reference booking for header details
+    const headerBooking = customerBookings[0];
+
+    // ✅ Step 5: Define header details
+    const billingName = headerBooking.billingName;
+    const billingGst = headerBooking.billingGst;
+    const billingAddress = headerBooking.billingAddress;
+    const billingState = headerBooking.toState || headerBooking.fromState || "N/A";
+
+    console.log("📦 INVOICE HEADER:");
+    console.log({
+      billingName,
+      billingGst,
+      billingAddress,
+      billingState,
+    });
+
+    // ✅ Step 6: Generate invoice number & update bookings
+    const invoiceNo = await generateInvoiceNumber(
+      headerBooking?.startStation?.stationName || "DEL"
+    );
     const billDate = new Date();
 
     await Booking.updateMany(
-      { _id: { $in: filteredBookings.map(b => b._id) } },
+      { _id: { $in: customerBookings.map((b) => b._id) } },
       { $set: { invoiceNo, billDate } }
     );
 
-    // ✅ Explicit billing details for header
-    const billingHeader = filteredBookings.find(
-      b => b.billingName.toLowerCase() === customerName.toLowerCase()
-    ) || filteredBookings[0];
-
+    // ✅ Step 7: Generate PDF
     const pdfBuffer = await generateInvoicePDF({
-      bookings: filteredBookings,
+      bookings: customerBookings,
       invoiceNo,
       billDate,
-      billingName: billingHeader.billingName,
-      billingGst: billingHeader.billingGst,
-      billingAddress: billingHeader.billingAddress,
-      billingState: billingHeader.toState || billingHeader.fromState || 'N/A',
+      billingName,
+      billingGst,
+      billingAddress,
+      billingState,
     });
 
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${customerName}_Invoice.pdf"`,
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${customerName}_Invoice.pdf"`,
     });
 
     res.send(pdfBuffer);
-
   } catch (err) {
-    console.error('Error generating invoice:', err);
-    res.status(500).json({ message: err.message || 'Server Error' });
+    console.error("❌ Error generating invoice:", err);
+    res.status(500).json({ message: err.message || "Server Error" });
   }
 };
+
+
 
 export const getAllCustomersPendingAmounts = async (req, res) => {
   try {

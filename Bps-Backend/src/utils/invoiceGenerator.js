@@ -3,9 +3,8 @@
 // ==============================
 
 import PDFDocument from 'pdfkit';
-import Booking from '../model/booking.model.js'; // adjust import path if needed
-import { generateInvoiceNumber } from '../utils/invoiceNumber.js'; // adjust import path
-
+import Booking from '../model/booking.model.js';
+import { generateInvoiceNumber } from '../utils/invoiceNumber.js';
 
 // ------------------------------
 // 🧩 Helper Functions
@@ -44,13 +43,13 @@ const convertNumberToWords = (num) => {
   return inWords(Math.floor(num));
 };
 
-
 // ------------------------------
 // 🧾 PDF GENERATOR
 // ------------------------------
 
 export const generateInvoicePDF = async (data) => {
   const { bookings, invoiceNo, billDate, billingName, billingGst, billingAddress, billingState } = data;
+
   const doc = new PDFDocument({ margin: 40, size: 'A4' });
   const buffers = [];
 
@@ -69,7 +68,7 @@ export const generateInvoicePDF = async (data) => {
     const stationContact = headerBooking?.startStation?.contact || '7779993453';
     const stateCode = '07';
 
-    const today = billDate || new Date();
+    const today = billDate ? new Date(billDate) : new Date();
     const dateOfBill = `${today.getDate()}-${today.getMonth() + 1}-${today.getFullYear()}`;
 
     doc.fontSize(16).font('Helvetica-Bold').text('BHARAT PARCEL SERVICES PVT. LTD.', { align: 'center' });
@@ -79,7 +78,8 @@ export const generateInvoicePDF = async (data) => {
     doc.text(stationName, 50, y); y += lineHeight;
     doc.text(stationAddress, 50, y); y += lineHeight;
     doc.text(`Phone Number: ${stationContact}`, 50, y); y += lineHeight;
-    doc.text(`GSTIN: 07AAECB6506F1ZY    PAN: AAECB6506F    SAC CODE: 9968`, 50, y); y += lineHeight + 10;
+    doc.text(`GSTIN: 07AAECB6506F1ZY    PAN: AAECB6506F    SAC CODE: 9968`, 50, y); 
+    y += lineHeight + 10;
 
     // === PARTY DETAILS ===
     doc.text(`Party Name: ${billingName || 'N/A'}`, 50, y);
@@ -93,10 +93,10 @@ export const generateInvoicePDF = async (data) => {
     doc.text(`GSTIN: ${billingGst || 'N/A'}`, 50, y);
     y += lineHeight;
 
-    doc.text(`Party Address: ${billingAddress || 'N/A'}`, 50, y);
+    doc.text(`Party Address: ${billingAddress || 'N/A'}`, 50, y, { width: 500 });
     y += lineHeight + 10;
 
-    console.log('PDF HEADER:', { billingName, billingGst, billingAddress, billingState });
+    console.log('✅ PDF HEADER BILLING INFO:', { billingName, billingGst, billingAddress, billingState });
 
     // === TABLE HEADER ===
     doc.font('Helvetica-Bold');
@@ -171,7 +171,7 @@ export const generateInvoicePDF = async (data) => {
     doc.fillColor('black').font('Helvetica-Bold');
 
     const footerY = y + (rowHeight - fontSize) / 2;
-    doc.text('TOTAL', colX.receiver, footerY, { width: 90, align: 'center' });
+    doc.text('TOTAL', colX.pod, footerY, { width: 100, align: 'center' });
     doc.text(totalNos.toString(), colX.nos, footerY, { width: 40, align: 'center' });
     doc.text(totalWeight.toString(), colX.weight, footerY, { width: 50, align: 'center' });
     doc.text(totalAmount.toFixed(2), colX.amount, footerY, { width: 60, align: 'center' });
@@ -179,8 +179,8 @@ export const generateInvoicePDF = async (data) => {
     y += rowHeight + 15;
 
     // === SUMMARY ===
-    const rightColX = 400;
-    const valueX = 500;
+    const rightColX = 380;
+    const valueX = 520;
     const gstRate = 9;
     const cgstAmount = (gstRate / 100) * totalAmount;
     const sgstAmount = (gstRate / 100) * totalAmount;
@@ -190,17 +190,26 @@ export const generateInvoicePDF = async (data) => {
 
     doc.font('Helvetica-Bold');
     doc.text(`AMOUNT TOTAL`, rightColX, y);
-    doc.text(totalAmount.toFixed(2), valueX, y, { width: 60, align: 'right' }); y += lineHeight;
+    doc.text(totalAmount.toFixed(2), valueX, y, { width: 60, align: 'right' }); 
+    y += lineHeight;
+
     doc.font('Helvetica');
     doc.text(`(+) CGST ${gstRate}%`, rightColX, y);
-    doc.text(cgstAmount.toFixed(2), valueX, y, { width: 60, align: 'right' }); y += lineHeight;
+    doc.text(cgstAmount.toFixed(2), valueX, y, { width: 60, align: 'right' }); 
+    y += lineHeight;
+
     doc.text(`(+) SGST ${gstRate}%`, rightColX, y);
-    doc.text(sgstAmount.toFixed(2), valueX, y, { width: 60, align: 'right' }); y += lineHeight;
+    doc.text(sgstAmount.toFixed(2), valueX, y, { width: 60, align: 'right' }); 
+    y += lineHeight;
+
     doc.text(`Round off`, rightColX, y);
-    doc.text(roundOff.toFixed(2), valueX, y, { width: 60, align: 'right' }); y += lineHeight;
+    doc.text(roundOff.toFixed(2), valueX, y, { width: 60, align: 'right' }); 
+    y += lineHeight;
+
     doc.font('Helvetica-Bold');
     doc.text(`GRAND TOTAL`, rightColX, y);
-    doc.text(grandTotal.toFixed(2), valueX, y, { width: 60, align: 'right' }); y += lineHeight + 15;
+    doc.text(grandTotal.toFixed(2), valueX, y, { width: 60, align: 'right' }); 
+    y += lineHeight + 15;
 
     // === AMOUNT IN WORDS ===
     doc.text(`AMOUNT IN WORDS :- INR ${convertNumberToWords(grandTotal)} Only.`, 50, y);
@@ -213,104 +222,4 @@ export const generateInvoicePDF = async (data) => {
 
     doc.end();
   });
-};
-
-
-// ------------------------------
-// 🚚 MAIN INVOICE FUNCTION
-// ------------------------------
-
-export const generateInvoiceByCustomer = async (req, res) => {
-  try {
-    const { customerName, fromDate, toDate } = req.body;
-
-    if (!customerName || !fromDate || !toDate) {
-      return res.status(400).json({ message: 'customerName, fromDate, and toDate are required' });
-    }
-
-    const from = new Date(fromDate);
-    const to = new Date(toDate);
-    to.setHours(23, 59, 59, 999);
-
-    const bookings = await Booking.find({
-      $or: [
-        { receiverName: { $regex: customerName, $options: 'i' } },
-        { senderName: { $regex: customerName, $options: 'i' } }
-      ],
-      bookingDate: { $gte: from, $lte: to },
-      isDelivered: true,
-    })
-      .populate('startStation')
-      .populate('customerId')
-      .sort({ bookingDate: 1 });
-
-    if (!bookings.length) {
-      return res.status(404).json({ message: 'No delivered bookings found for this customer' });
-    }
-
-    // Determine billing info
-    const filteredBookings = bookings.map((booking) => {
-      const hasToPayItem = booking.items.some((i) => i.toPay === 'toPay');
-      const hasPaidItem = booking.items.some((i) => i.toPay === 'paid');
-      let billingName = booking.receiverName;
-      let billingGst = booking.receiverGgt;
-      let billingAddress = booking.receiverLocality;
-      let billingType = 'receiver';
-
-      if (hasToPayItem) {
-        billingName = booking.receiverName;
-        billingGst = booking.receiverGgt;
-        billingAddress = booking.receiverLocality;
-        billingType = 'receiver (toPay)';
-      } else if (hasPaidItem && !hasToPayItem) {
-        billingName = booking.senderName;
-        billingGst = booking.senderGgt;
-        billingAddress = booking.senderLocality;
-        billingType = 'sender (paid)';
-      }
-
-      return { ...booking.toObject(), billingName, billingGst, billingAddress, billingType };
-    });
-
-    console.log('Final billing information for PDF:');
-    filteredBookings.forEach((b) => {
-      console.log(`Booking ${b.bookingId}:`);
-      console.log(`  - Billing Name: ${b.billingName}`);
-      console.log(`  - Billing Type: ${b.billingType}`);
-      console.log(`  - Sender: ${b.senderName}`);
-      console.log(`  - Receiver: ${b.receiverName}`);
-    });
-
-    const headerBooking = filteredBookings.find(
-      (b) => b.billingName.toLowerCase() === customerName.toLowerCase()
-    ) || filteredBookings[0];
-
-    const invoiceNo = await generateInvoiceNumber(headerBooking?.startStation?.stationName || 'DEL');
-    const billDate = new Date();
-
-    await Booking.updateMany(
-      { _id: { $in: filteredBookings.map((b) => b._id) } },
-      { $set: { invoiceNo, billDate } }
-    );
-
-    const pdfBuffer = await generateInvoicePDF({
-      bookings: filteredBookings,
-      invoiceNo,
-      billDate,
-      billingName: headerBooking.billingName,
-      billingGst: headerBooking.billingGst,
-      billingAddress: headerBooking.billingAddress,
-      billingState: headerBooking.toState || headerBooking.fromState || 'N/A',
-    });
-
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${customerName}_Invoice.pdf"`,
-    });
-
-    res.send(pdfBuffer);
-  } catch (err) {
-    console.error('Error generating invoice:', err);
-    res.status(500).json({ message: err.message || 'Server Error' });
-  }
 };
