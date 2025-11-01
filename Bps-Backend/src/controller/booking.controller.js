@@ -1209,102 +1209,108 @@ export const generateInvoiceByCustomer = async (req, res) => {
     if (!customerName || !fromDate || !toDate) {
       return res.status(400).json({
         message: "customerName, fromDate, and toDate are required",
-        data: { customerName, fromDate, toDate }
-      });
-    }
-    const cleanName = customerName
-      .trim()
-      .replace(/\s+/g, "\\s+"); // collapse spaces/tabs in regex
-
-    const customer = await Customer.findOne({
-      $expr: {
-        $regexMatch: {
-          input: {
-            $trim: {
-              input: {
-                $concat: [
-                  "$firstName", " ",
-                  { $ifNull: ["$middleName", ""] }, " ",
-                  "$lastName"
-                ]
-              }
-            }
-          },
-          regex: cleanName,
-          options: "i"
-        }
-      }
-    });
-
-
-
-
-    if (!customer) {
-      return res.status(404).json({
-        message: "Customer not found",
-        customerSearchTerm: customerName,
       });
     }
 
-    // Step 2: Find Bookings
     const from = new Date(fromDate);
     const to = new Date(toDate);
-    to.setHours(23, 59, 59, 999); // end of day
+    to.setHours(23, 59, 59, 999);
 
+    // ✅ Get all bookings for this customer name (either sender or receiver)
     const bookings = await Booking.find({
-      customerId: customer._id,
+      $or: [
+        { receiverName: { $regex: customerName, $options: 'i' } },
+        { senderName: { $regex: customerName, $options: 'i' } }
+      ],
       bookingDate: { $gte: from, $lte: to },
+      isDelivered: true,
     })
-      .populate('startStation') // <-- so PDF gets stationName, address, gst, contact
+      .populate('startStation')
+      .populate('customerId')
       .sort({ bookingDate: 1 });
 
-
     if (!bookings.length) {
-      // Fetch all bookings for debugging in API response
-      const allBookings = await Booking.find({ customerId: customer._id }).sort({ bookingDate: 1 });
-
       return res.status(404).json({
-        message: "No bookings found in the given date range",
-        customer: {
-          id: customer._id,
-          name: `${customer.firstName} ${customer.lastName}`,
-        },
-        requestedDateRange: {
-          from: from.toISOString(),
-          to: to.toISOString(),
-        },
-        availableBookingsDates: allBookings.map(b => ({
-          id: b._id,
-          date: b.bookingDate,
-          billTotal: b.billTotal,
-          receiverName: b.receiverName
-        })),
+        message: "No delivered bookings found for this party in the given date range",
+        searchedName: customerName,
       });
     }
-    const headerBooking = bookings?.[0];
-    const stationName = headerBooking?.startStation?.stationName || "NA";
 
-    // ✅ Generate invoice number per station
-    const invoiceNo = await generateInvoiceNumber(stationName);
+    // ✅ Determine billing info per booking
+    const filteredBookings = bookings.map(booking => {
+      const hasToPayItem = booking.items.some(i => i.toPay === 'toPay');
+      const hasPaidItem = booking.items.some(i => i.toPay === 'paid');
+      
+      let billingName = booking.receiverName;
+      let billingGst = booking.receiverGgt;
+      let billingAddress = booking.receiverLocality;
+      let billingType = 'receiver';
+
+      if (hasToPayItem) {
+        billingName = booking.receiverName;
+        billingGst = booking.receiverGgt;
+        billingAddress = booking.receiverLocality;
+        billingType = 'receiver (toPay)';
+      } else if (hasPaidItem && !hasToPayItem) {
+        billingName = booking.senderName;
+        billingGst = booking.senderGgt;
+        billingAddress = booking.senderLocality;
+        billingType = 'sender (paid)';
+      }
+
+      return {
+        ...booking.toObject(),
+        billingName,
+        billingGst,
+        billingAddress,
+        billingType,
+      };
+    });
+
+    // ✅ Print to check
+    console.log("Final billing information for PDF:");
+    filteredBookings.forEach(b => {
+      console.log(`Booking ${b.bookingId}:`);
+      console.log(`  - Billing Name: ${b.billingName}`);
+      console.log(`  - Billing Type: ${b.billingType}`);
+      console.log(`  - Sender: ${b.senderName}`);
+      console.log(`  - Receiver: ${b.receiverName}`);
+    });
+
+    // ✅ Use the name that was requested — NOT first booking
+    const invoiceNo = await generateInvoiceNumber(filteredBookings[0]?.startStation?.stationName || 'DEL');
     const billDate = new Date();
+
     await Booking.updateMany(
-      { _id: { $in: bookings.map(b => b._id) } },
+      { _id: { $in: filteredBookings.map(b => b._id) } },
       { $set: { invoiceNo, billDate } }
     );
-    // Step 3: Generate PDF
-    const pdfBuffer = await generateInvoicePDF(customer, bookings, invoiceNo);
+
+    // ✅ Explicit billing details for header
+    const billingHeader = filteredBookings.find(
+      b => b.billingName.toLowerCase() === customerName.toLowerCase()
+    ) || filteredBookings[0];
+
+    const pdfBuffer = await generateInvoicePDF({
+      bookings: filteredBookings,
+      invoiceNo,
+      billDate,
+      billingName: billingHeader.billingName,
+      billingGst: billingHeader.billingGst,
+      billingAddress: billingHeader.billingAddress,
+      billingState: billingHeader.toState || billingHeader.fromState || 'N/A',
+    });
 
     res.set({
       'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${customer.firstName}_Invoice.pdf"`,
+      'Content-Disposition': `attachment; filename="${customerName}_Invoice.pdf"`,
     });
 
     res.send(pdfBuffer);
+
   } catch (err) {
-    res.status(500).json({
-      message: err.message || "Server Error",
-      error: true
-    });
+    console.error('Error generating invoice:', err);
+    res.status(500).json({ message: err.message || 'Server Error' });
   }
 };
 
