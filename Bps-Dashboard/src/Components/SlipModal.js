@@ -4,23 +4,22 @@ import {
   TableBody, TableRow, TableCell, Paper, Grid
 } from '@mui/material';
 import ReceiptIcon from '@mui/icons-material/Receipt';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const SlipModal = ({ open, handleClose, bookingData }) => {
   const printRef = useRef();
 
   if (!bookingData) return null;
 
-  // --- helper functions ---
   const formatCurrency = (amount) => `₹${Number(amount || 0).toFixed(2)}`;
   const formatDate = (dateStr) => dateStr ? new Date(dateStr).toLocaleDateString() : 'N/A';
 
-  // --- local addresses ---
   const addresses = [
     { city: "H.O. DELHI", address: "332, Kucha Ghasi Ram, Chandni Chowk, Fatehpuri, Delhi -110006", phone: "011-45138699, 7779993453" },
     { city: "MUMBAI", address: "1, Malharrao Wadi, Gr. Flr., R. No. 4, D.A Lane Kalbadevi Rd., Mumbai-400002", phone: "022-49711975, 7779993454" }
   ];
 
-  // --- tax calculations (fallback if not provided from API) ---
   const cgstRate = bookingData?.cgst || 9;
   const sgstRate = bookingData?.sgst || 9;
   const igstRate = bookingData?.igst || 0;
@@ -30,45 +29,38 @@ const SlipModal = ({ open, handleClose, bookingData }) => {
   const igstAmount = (bookingData?.grandTotal * igstRate) / 100;
   const totalWithTax = bookingData?.grandTotal + cgstAmount + sgstAmount + igstAmount;
 
-  // --- invoice layout ---
   const Invoice = () => (
-    <Paper elevation={0} sx={{ m: 1, border: '1.5px solid black' }}>
-      {/* Header */}
+    <Paper elevation={0} sx={{ border: '1px solid black', m: 1, p: 1 }}>
       <Grid container justifyContent="space-between" p={1}>
-        <Box textAlign="center" color="black">
-          <Typography variant="h5" borderBottom="2px solid #949090ff">
-            BHARAT PARCEL SERVICES PVT.LTD.
+        <Box textAlign="center" flex={1}>
+          <Typography variant="h5" sx={{ borderBottom: '2px solid #999' }}>
+            BHARAT PARCEL SERVICES PVT. LTD.
           </Typography>
-          <Typography display="inline-block" borderBottom="2px solid #949090ff">
+          <Typography sx={{ borderBottom: '2px solid #999' }}>
             SUBJECT TO {bookingData?.startStation?.stationName} JURISDICTION
           </Typography>
         </Box>
-
         <Box textAlign="end">
           <Typography variant="subtitle2" fontWeight="bold">GSTIN : {bookingData?.startStation?.gst}</Typography>
           <Typography variant="subtitle2" fontWeight="bold">PAN : AAECB6506F</Typography>
         </Box>
       </Grid>
 
-      {/* Address Section */}
-      <Box sx={{ mt: 2, p: 1 }}>
+      <Box sx={{ mt: 1 }}>
         {addresses.map((addr) => (
-          <Grid key={addr.city} container alignItems="flex-start" spacing={0.5}>
-            <Typography variant="subtitle2">{addr.city}</Typography>
-            <Typography variant="subtitle2" mx={0.5}>:</Typography>
-            <Typography variant="caption" fontWeight="bold">{addr.address}</Typography>
-            <Typography variant="caption" display="block" fontWeight="bold">{addr.phone}</Typography>
+          <Grid key={addr.city} container alignItems="flex-start">
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>{addr.city}:</Typography>
+            <Typography variant="caption" ml={0.5} sx={{ fontWeight: 600 }}>{addr.address}</Typography>
+            <Typography variant="caption" display="block" sx={{ fontWeight: 600 }}>{addr.phone}</Typography>
           </Grid>
         ))}
       </Box>
 
-      {/* Ref & Dates */}
       <Grid container justifyContent="space-between" borderTop="1px solid black" borderBottom="1px solid black" p={1}>
         <Typography>Ref. No.: <strong>{bookingData?.items?.[0]?.refNo}</strong></Typography>
         <Typography>Date: <strong>{formatDate(bookingData?.bookingDate)}</strong></Typography>
       </Grid>
 
-      {/* From & To */}
       <Grid container justifyContent="space-between" borderBottom="1px solid black" p={1}>
         <Typography>From (City): <strong>{bookingData?.fromCity}</strong></Typography>
         <Typography>To (City): <strong>{bookingData?.toCity}</strong></Typography>
@@ -84,18 +76,17 @@ const SlipModal = ({ open, handleClose, bookingData }) => {
         <Typography>GSTIN: <strong>{bookingData?.receiverGgt}</strong></Typography>
       </Grid>
 
-      {/* Items Table */}
       <Table size="small" sx={{ border: '1px solid black', mt: 1 }}>
         <TableHead>
           <TableRow>
-            {["No. of", "Insurance", "VPP Amount", "To Pay/Paid", "Weight (Kgs)", "Amount"].map((h, i) => (
+            {["No.", "Insurance", "VPP Amount", "To Pay/Paid", "Weight (Kgs)", "Amount"].map((h, i) => (
               <TableCell key={i} align="center" sx={{ border: "1px solid black", fontWeight: "bold" }}>{h}</TableCell>
             ))}
           </TableRow>
         </TableHead>
         <TableBody>
           {bookingData.items.map((item, idx) => (
-            <TableRow key={item._id || idx}>
+            <TableRow key={idx}>
               <TableCell align="center" sx={{ border: "1px solid black" }}>{idx + 1}</TableCell>
               <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(item.insurance)}</TableCell>
               <TableCell align="center" sx={{ border: "1px solid black" }}>{formatCurrency(item.vppAmount)}</TableCell>
@@ -105,15 +96,11 @@ const SlipModal = ({ open, handleClose, bookingData }) => {
             </TableRow>
           ))}
 
-          {/* Totals */}
           <TableRow>
-            <TableCell colSpan={5} align="right" sx={{ fontWeight: "bold", border: "1px solid black" }}>Sub Total</TableCell>
-            <TableCell align="center" sx={{ fontWeight: "bold", border: "1px solid black" }}>
-              {formatCurrency(bookingData?.grandTotal)}
-            </TableCell>
+            <TableCell colSpan={5} align="right" sx={{ border: "1px solid black", fontWeight: "bold" }}>Sub Total</TableCell>
+            <TableCell align="center" sx={{ border: "1px solid black", fontWeight: "bold" }}>{formatCurrency(bookingData?.grandTotal)}</TableCell>
           </TableRow>
 
-          {/* Tax rows */}
           {cgstRate > 0 && (
             <TableRow>
               <TableCell colSpan={5} align="right" sx={{ border: "1px solid black" }}>CGST ({cgstRate}%)</TableCell>
@@ -133,45 +120,58 @@ const SlipModal = ({ open, handleClose, bookingData }) => {
             </TableRow>
           )}
 
-          {/* Total after tax */}
           <TableRow>
-            <TableCell colSpan={5} align="right" sx={{ fontWeight: "bold", border: "1px solid black" }}>Total (Incl. Tax)</TableCell>
-            <TableCell align="center" sx={{ fontWeight: "bold", border: "1px solid black" }}>
-              {formatCurrency(totalWithTax)}
-            </TableCell>
+            <TableCell colSpan={5} align="right" sx={{ border: "1px solid black", fontWeight: "bold" }}>Total (Incl. Tax)</TableCell>
+            <TableCell align="center" sx={{ border: "1px solid black", fontWeight: "bold" }}>{formatCurrency(totalWithTax)}</TableCell>
           </TableRow>
         </TableBody>
       </Table>
     </Paper>
   );
 
-  const handlePrint = () => {
-    const w = window.open('', '_blank');
-    w.document.write(`<html><head><title>Invoice</title></head><body>${printRef.current.innerHTML}</body></html>`);
-    w.document.close();
-    w.print();
+  // ✅ DOWNLOAD AS PDF (A4 FIT)
+  const handleDownloadPDF = async () => {
+    const element = printRef.current;
+    const canvas = await html2canvas(element, { scale: 2 });
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const imgProps = pdf.getImageProperties(imgData);
+    const imgHeight = (imgProps.height * pageWidth) / imgProps.width;
+
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    pdf.addImage(imgData, 'PNG', 0, position, pageWidth, imgHeight);
+    heightLeft -= pageHeight;
+
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, 'PNG', 0, position, pageWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+
+    pdf.save(`Slip_${bookingData?.bookingId || "BPS"}.pdf`);
   };
 
   return (
     <Modal open={open} onClose={handleClose}>
       <Box sx={{
         position: 'absolute', top: '50%', left: '50%',
-        transform: 'translate(-50%, -50%)', bgcolor: '#fff', width: '210mm',
-        border: '1px solid black', p: 2, maxHeight: '90vh', overflowY: 'auto'
+        transform: 'translate(-50%, -50%)', bgcolor: '#fff',
+        width: '210mm', p: 2, border: '1px solid black',
+        maxHeight: '90vh', overflowY: 'auto'
       }}>
         <Box ref={printRef}>
           <Invoice />
-          <Divider sx={{ borderColor: 'black', borderStyle: 'dashed', my: 1 }} />
+          <Divider sx={{ borderColor: 'black', borderStyle: 'dashed', my: 2 }} />
           <Invoice />
         </Box>
         <Box textAlign="center" mt={2}>
-          <Button
-            variant="contained"
-            startIcon={<ReceiptIcon />}
-            sx={{ borderRadius: 2, px: 4, textTransform: 'none' }}
-            onClick={handlePrint}
-          >
-            Print Slip
+          <Button variant="contained" startIcon={<ReceiptIcon />} onClick={handleDownloadPDF}>
+            Download PDF
           </Button>
         </Box>
       </Box>
