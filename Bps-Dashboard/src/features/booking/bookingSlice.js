@@ -600,25 +600,25 @@ const bookingSlice = createSlice({
         state.error = null;
       })
       .addCase(receiveCustomerPayment.fulfilled, (state, action) => {
-        state.loading = false;
-        const { customerId, paymentResponse } = action.payload;
+  state.loading = false;
+  const { customerId, paymentData } = action.payload; // ✅ Correct destructuring
 
-        // Update local state instantly
-        const updatedStats = paymentResponse.data.updatedStats;
-        const customerIndex = state.customers.findIndex(
-          (c) => c.customerId === customerId
-        );
+  // Update local state instantly
+  const updatedStats = paymentData?.updatedStats; // ✅ Use paymentData
+  const customerIndex = state.customers.findIndex(
+    (c) => c.customerId === customerId
+  );
 
-        if (customerIndex !== -1 && updatedStats) {
-          state.customers[customerIndex] = {
-            ...state.customers[customerIndex],
-            unpaidBookings: updatedStats.unpaidBookings,
-            totalAmount: updatedStats.totalAmount,
-            totalPaid: updatedStats.totalPaid,
-            pendingAmount: updatedStats.pendingAmount
-          };
-        }
-      })
+  if (customerIndex !== -1 && updatedStats) {
+    state.customers[customerIndex] = {
+      ...state.customers[customerIndex],
+      unpaidBookings: updatedStats.unpaidBookings,
+      totalAmount: updatedStats.totalAmount,
+      totalPaid: updatedStats.totalPaid,
+      pendingAmount: updatedStats.pendingAmount
+    };
+  }
+})
       .addCase(receiveCustomerPayment.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;

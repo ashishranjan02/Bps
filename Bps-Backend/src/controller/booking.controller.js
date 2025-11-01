@@ -1404,76 +1404,142 @@ export const generateInvoiceByCustomer = async (req, res) => {
 
 export const getAllCustomersPendingAmounts = async (req, res) => {
   try {
-    const customerPayments = await Booking.aggregate([
-      {
-        $group: {
-          _id: "$customerId",
-          totalGrandTotal: { $sum: "$grandTotal" },
-          totalAmountPaid: { $sum: { $ifNull: ["$paidAmount", 0] } }, // handle missing paidAmount
-          bookingCount: { $sum: 1 },
-          unpaidBookings: {
-            $sum: {
-              $cond: [{ $ne: ["$paymentStatus", "Paid"] }, 1, 0]
-            }
+    // Get all bookings with customer data
+    const bookings = await Booking.find({ isDeleted: { $ne: true } })
+      .populate('customerId')
+      .lean();
+
+    // Process bookings to calculate payments based on items
+    const customerMap = new Map();
+
+    bookings.forEach(booking => {
+      const customerId = booking.customerId?._id || booking.customerId;
+      if (!customerId) return; // Skip if no customer ID
+      
+      if (!customerMap.has(customerId)) {
+        const customer = booking.customerId || {};
+        customerMap.set(customerId, {
+          customerId,
+          name: `${customer.firstName || ''} ${customer.middleName || ''} ${customer.lastName || ''}`.trim() || 'Unknown Customer',
+          email: customer.emailId || 'N/A',
+          contact: customer.contactNumber || 'N/A',
+          totalBookings: 0,
+          unpaidBookings: 0,
+          fullyPaidBookings: 0,
+          partiallyPaidBookings: 0,
+          totalAmount: 0,
+          totalPaid: 0,
+          pendingAmount: 0,
+          bookings: [] // Store individual bookings for debugging
+        });
+      }
+
+      const customerData = customerMap.get(customerId);
+      const grandTotal = booking.grandTotal || 0;
+      
+      // Calculate paid amount based on items' toPay status
+      let paidAmount = 0;
+      let paymentStatus = "Unpaid";
+      
+      if (booking.items && Array.isArray(booking.items)) {
+        const totalItemsAmount = booking.items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+        const paidItemsAmount = booking.items.reduce((sum, item) => 
+          item.toPay === 'paid' ? sum + (Number(item.amount) || 0) : sum, 0);
+        
+        if (paidItemsAmount > 0) {
+          if (paidItemsAmount >= totalItemsAmount && totalItemsAmount > 0) {
+            // All items are paid
+            paidAmount = grandTotal;
+            paymentStatus = "Paid";
+          } else {
+            // Some items are paid - calculate proportional amount
+            const paidRatio = totalItemsAmount > 0 ? paidItemsAmount / totalItemsAmount : 0;
+            paidAmount = Math.round(grandTotal * paidRatio);
+            paymentStatus = "Partial";
           }
+        } else {
+          // No items are paid, use booking-level payment
+          paidAmount = booking.paidAmount || 0;
+          paymentStatus = paidAmount > 0 ? "Partial" : "Unpaid";
         }
-      },
-      {
-        $lookup: {
-          from: "customers",
-          localField: "_id",
-          foreignField: "_id",
-          as: "customer"
-        }
-      },
-      { $unwind: "$customer" },
-      {
-        $project: {
-          _id: 0,
-          customerId: "$_id",
-          name: {
-            $concat: [
-              "$customer.firstName",
-              " ",
-              { $ifNull: ["$customer.middleName", ""] },
-              {
-                $cond: [
-                  { $gt: [{ $strLenCP: { $ifNull: ["$customer.middleName", ""] } }, 0] },
-                  " ",
-                  ""
-                ]
-              },
-              "$customer.lastName"
-            ]
-          },
-          email: "$customer.emailId",
-          contact: "$customer.contactNumber",
-          totalBookings: "$bookingCount",
-          unpaidBookings: "$unpaidBookings",
-          totalAmount: "$totalGrandTotal",
-          totalPaid: "$totalAmountPaid",
-          pendingAmount: { $subtract: ["$totalGrandTotal", "$totalAmountPaid"] }
-        }
-      },
-      { $match: { pendingAmount: { $gt: 0 } } },
-      { $sort: { pendingAmount: -1 } }
-    ]);
+      } else {
+        // No items array, use booking-level payment
+        paidAmount = booking.paidAmount || 0;
+        paymentStatus = paidAmount >= grandTotal ? "Paid" : 
+                       paidAmount > 0 ? "Partial" : "Unpaid";
+      }
+
+      const pendingForBooking = Math.max(grandTotal - paidAmount, 0);
+
+      // Update customer totals
+      customerData.totalBookings++;
+      customerData.totalAmount += grandTotal;
+      customerData.totalPaid += paidAmount;
+      customerData.pendingAmount += pendingForBooking;
+
+      // Update booking counts based on payment status
+      if (paymentStatus === "Paid") {
+        customerData.fullyPaidBookings++;
+      } else if (paymentStatus === "Partial") {
+        customerData.partiallyPaidBookings++;
+        customerData.unpaidBookings++; // Partially paid still has unpaid amount
+      } else {
+        customerData.unpaidBookings++;
+      }
+
+      // Store booking details for debugging
+      customerData.bookings.push({
+        bookingId: booking.bookingId,
+        grandTotal,
+        paidAmount,
+        pendingAmount: pendingForBooking,
+        paymentStatus,
+        items: booking.items?.map(item => ({
+          receiptNo: item.receiptNo,
+          amount: item.amount,
+          toPay: item.toPay
+        }))
+      });
+    });
+
+    // Convert map to array and filter customers with pending amounts
+    const customerPayments = Array.from(customerMap.values())
+      .filter(customer => customer.pendingAmount > 0)
+      .sort((a, b) => b.pendingAmount - a.pendingAmount);
+
+    // Calculate summary
+    const totalPendingAmount = customerPayments.reduce((sum, c) => sum + c.pendingAmount, 0);
+    const customersWithUnpaidBookings = customerPayments.filter(c => c.unpaidBookings > 0).length;
+    const totalUnpaidBookings = customerPayments.reduce((sum, c) => sum + c.unpaidBookings, 0);
+    const totalFullyPaidBookings = customerPayments.reduce((sum, c) => sum + c.fullyPaidBookings, 0);
+    const totalPartiallyPaidBookings = customerPayments.reduce((sum, c) => sum + c.partiallyPaidBookings, 0);
 
     const summary = {
       totalCustomers: customerPayments.length,
-      totalPendingAmount: customerPayments.reduce((sum, c) => sum + c.pendingAmount, 0),
-      customersWithUnpaidBookings: customerPayments.filter(c => c.unpaidBookings > 0).length,
-      averagePendingPerCustomer:
-        customerPayments.length > 0
-          ? customerPayments.reduce((sum, c) => sum + c.pendingAmount, 0) / customerPayments.length
-          : 0
+      totalPendingAmount: Math.round(totalPendingAmount * 100) / 100,
+      customersWithUnpaidBookings,
+      totalUnpaidBookings,
+      totalFullyPaidBookings,
+      totalPartiallyPaidBookings,
+      averagePendingPerCustomer: customerPayments.length > 0 
+        ? Math.round((totalPendingAmount / customerPayments.length) * 100) / 100 
+        : 0,
+      totalBookings: customerPayments.reduce((sum, c) => sum + c.totalBookings, 0),
+      totalAmount: customerPayments.reduce((sum, c) => sum + c.totalAmount, 0),
+      totalPaid: customerPayments.reduce((sum, c) => sum + c.totalPaid, 0)
     };
+
+    // Remove bookings array from response to keep it clean
+    const cleanCustomerPayments = customerPayments.map(customer => {
+      const { bookings, ...cleanCustomer } = customer;
+      return cleanCustomer;
+    });
 
     res.status(200).json({
       success: true,
       summary,
-      customers: customerPayments,
-      message: `Found ${customerPayments.length} customers with pending payments`
+      customers: cleanCustomerPayments,
+      message: `Found ${customerPayments.length} customers with pending payments totaling ₹${summary.totalPendingAmount}`
     });
 
   } catch (err) {
@@ -1485,6 +1551,7 @@ export const getAllCustomersPendingAmounts = async (req, res) => {
     });
   }
 };
+
 
 export const receiveCustomerPayment = asyncHandler(async (req, res) => {
   const { customerId } = req.params;
